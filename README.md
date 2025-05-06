@@ -23,7 +23,7 @@ into daily **ticker‑level sentiment factors** you can back‑test against stoc
 
 ```bash
 # 1. clone repo & install
-git clone https://github.com/<your‑user>/nlp-alpha-engine.git
+git clone https://github.com/MalcolmJAPark/nlp-alpha-engine.git
 cd nlp-alpha-engine
 pip install -r requirements.txt
 
