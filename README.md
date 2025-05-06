@@ -1,8 +1,5 @@
 # NLP Alpha Engine – News & Social‑Media Sentiment Signals for Equities
 
-![CI](https://img.shields.io/github/actions/workflow/status/<your‑user>/nlp‑alpha‑engine/ci.yml)
-![license](https://img.shields.io/github/license/<your‑user>/nlp‑alpha‑engine)
-
 A college‑level project that transforms live news articles and Reddit finance chatter
 into daily **ticker‑level sentiment factors** you can back‑test against stock returns.
 
