@@ -1,97 +1,120 @@
 #!/usr/bin/env python3
-"""
-NewsAPI.org scraper: Automatically fetches yesterday's headlines (English, sorted by publication date)
-and saves raw JSON responses in data/raw/YYYY-MM-DD/.
-Runs once daily at 01:00 local time.
-"""
+# newsapi_scraper.py
+# Fetch yesterday's NewsAPI.org headlines for S&P 500 companies (up to 100 requests/day)
 
 import os
+import json
+import time
 import requests
 import datetime
-import time
-import json
-import schedule
+import pandas as pd
 
-API_KEY = "e571f2b08136491994bde473746cf058"
-BASE_URL = "https://newsapi.org/v2/everything"
-PAGE_SIZE = 100       # maximum page size per request
-MAX_REQUESTS = 100    # NewsAPI free plan limit per day
+API_KEY = 'e571f2b08136491994bde473746cf058'
+
+WIKI_URL = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
+NEWSAPI_URL = 'https://newsapi.org/v2/everything'
+
+# Number of tickers per query to stay within 100 requests (approx. 500 symbols / 5 per group = 100 requests)
+GROUP_SIZE = 5
+# Minimum delay between requests (seconds) to avoid hitting rate limits
+REQUEST_DELAY = 1
+# Maximum number of retries on 429 errors
+MAX_RETRIES = 5
 
 
-def fetch_headlines(page: int, date_str: str) -> dict:
+def fetch_sp500_tickers():
     """
-    Fetches a single page of articles from NewsAPI for a given page and date.
+    Scrape the current list of S&P 500 tickers from Wikipedia.
     """
-    params = {
-        "q":       "news",
-        "from": date_str,
-        "to": date_str,
-        "language": "en",
-        "sortBy": "publishedAt",
-        "pageSize": PAGE_SIZE,
-        "page": page,
-        "apiKey": API_KEY
-    }
-    response = requests.get(BASE_URL, params=params)
-    response.raise_for_status()
-    return response.json()
+    tables = pd.read_html(WIKI_URL)
+    df = tables[0]
+    return df['Symbol'].tolist()
 
 
-def save_response(data: dict, date_str: str, page: int) -> None:
+def chunk_list(items, size):
     """
-    Saves the JSON response to data/raw/YYYY-MM-DD/headlines_page_{page}.json
+    Yield successive chunks of length 'size' from 'items'.
     """
-    dir_path = os.path.join("data", "raw", date_str)
-    os.makedirs(dir_path, exist_ok=True)
-    file_name = f"headlines_page_{page}.json"
-    file_path = os.path.join(dir_path, file_name)
-    with open(file_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    print(f"Saved page {page} -> {file_path}")
+    for i in range(0, len(items), size):
+        yield items[i:i + size]
 
 
-def run_job():
-    # Calculate yesterday's date in YYYY-MM-DD format
-    yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
-    print(f"[{datetime.datetime.now().isoformat()}] Fetching headlines for {yesterday}...")
+def request_with_backoff(url, params):
+    """
+    Make a GET request with simple exponential backoff on HTTP 429.
+    """
+    retries = 0
+    while True:
+        response = requests.get(url, params=params)
+        if response.status_code == 429:
+            if retries < MAX_RETRIES:
+                wait = 2 ** retries
+                print(f"Rate limit hit (429). Retrying in {wait} seconds...")
+                time.sleep(wait)
+                retries += 1
+                continue
+            else:
+                response.raise_for_status()
+        else:
+            response.raise_for_status()
+        return response.json()
 
-    for page in range(1, MAX_REQUESTS + 1):
-        try:
-            data = fetch_headlines(page, yesterday)
-        except requests.HTTPError as e:
-            print(f"HTTP error on page {page}: {e}")
-            break
 
-        if data.get("status") != "ok":
-            print(f"API error on page {page}: {data}")
-            break
+def fetch_headlines_for_date(date, api_key):
+    """
+    Fetch articles for all S&P 500 companies for a given date.
+    """
+    tickers = fetch_sp500_tickers()
+    all_articles = []
 
-        articles = data.get("articles", [])
-        if not articles:
-            print(f"No articles found on page {page}. Stopping.")
-            break
+    # Format ISO datetime strings for NewsAPI
+    from_param = date.strftime('%Y-%m-%dT00:00:00')
+    to_param = date.strftime('%Y-%m-%dT23:59:59')
 
-        save_response(data, yesterday, page)
+    for group in chunk_list(tickers, GROUP_SIZE):
+        query = ' OR '.join(group)
+        params = {
+            'q': query,
+            'language': 'en',
+            'from': from_param,
+            'to': to_param,
+            'sortBy': 'publishedAt',
+            'apiKey': api_key,
+            'pageSize': 100
+        }
+        data = request_with_backoff(NEWSAPI_URL, params)
+        articles = data.get('articles', [])
+        all_articles.extend(articles)
+        # Delay to respect rate limits
+        time.sleep(REQUEST_DELAY)
 
-        if len(articles) < PAGE_SIZE:
-            print("Retrieved all available articles.")
-            break
+    return all_articles
 
-        time.sleep(1)  # Be courteous to API
 
-    print("Job done.")
+def save_articles(articles, date):
+    """
+    Save the raw JSON articles to data/raw/YYYY-MM-DD/headlines.json.
+    """
+    date_str = date.strftime('%Y-%m-%d')
+    output_dir = os.path.join('data', 'raw', date_str)
+    os.makedirs(output_dir, exist_ok=True)
+
+    output_path = os.path.join(output_dir, 'headlines.json')
+    with open(output_path, 'w') as f:
+        json.dump({
+            'date': date_str,
+            'articles': articles
+        }, f, indent=2)
+
+    print(f"Saved {len(articles)} articles to {output_path}")
 
 
 def main():
-    # Schedule the daily job at 01:00
-    schedule.every().day.at("01:00").do(run_job)
-    print("Scheduler started: job will run daily at 01:00 local time.")
-
-    # Keep the script running
-    while True:
-        schedule.run_pending()
-        time.sleep(60)
+    # Use UTC date for consistency; adjust if needed for local timezone
+    yesterday = datetime.datetime.utcnow().date() - datetime.timedelta(days=1)
+    articles = fetch_headlines_for_date(yesterday, API_KEY)
+    save_articles(articles, yesterday)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
