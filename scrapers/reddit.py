@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Reddit scraper: Streams new posts from r/stocks, r/wallstreetbets, r/investing (1 request/sec throttle)
-and saves each post's raw JSON to data/raw/YYYY-MM-DD/reddit_stream.json. Creates a new folder/file daily.
+Reddit scraper: Streams new posts from r/stocks, r/wallstreetbets, and r/investing at 1 request/sec throttle,
+constructs a JSON object of key post fields, and appends each to a daily file under data/raw/YYYY-MM-DD/reddit_stream.json.
 """
 
 import os
@@ -29,30 +29,39 @@ def stream_submissions():
 
     combined = "+".join(SUBREDDITS)
     subreddit = reddit.subreddit(combined)
-
     print(f"Starting stream for: {combined}")
+
     for submission in subreddit.stream.submissions():
         try:
-            # Determine date string for this submission
+            # Build timestamp and daily directory
             timestamp = datetime.datetime.fromtimestamp(submission.created_utc)
-            date_str = timestamp.date().isoformat()  # YYYY-MM-DD
-
-            # Prepare directory and file path
+            date_str = timestamp.date().isoformat()
             dir_path = os.path.join("data", "raw", date_str)
             os.makedirs(dir_path, exist_ok=True)
             file_path = os.path.join(dir_path, "reddit_stream.json")
 
-            # Write raw JSON data
+            # Extract key fields for JSON
+            post_data = {
+                "id": submission.id,
+                "title": submission.title,
+                "author": submission.author.name if submission.author else None,
+                "created_utc": submission.created_utc,
+                "subreddit": submission.subreddit.display_name,
+                "url": submission.url,
+                "num_comments": submission.num_comments,
+                "score": submission.score,
+                "selftext": submission.selftext
+            }
+
+            # Append to daily file
             with open(file_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(submission._data) + "\n")
+                f.write(json.dumps(post_data, ensure_ascii=False) + "\n")
 
             print(f"[{timestamp.isoformat()}] Saved {submission.id} to {file_path}")
-
-            # Throttle to respect rate limit
             time.sleep(THROTTLE_SECONDS)
 
         except Exception as e:
-            print(f"Error processing submission: {e}")
+            print(f"Error processing submission {submission.id}: {e}")
             time.sleep(THROTTLE_SECONDS)
 
 
@@ -62,3 +71,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
