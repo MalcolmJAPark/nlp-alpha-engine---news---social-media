@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-NewsAPI.org scraper: Fetches yesterday's headlines (English, sorted by publication date)
-and saves raw JSON responses in data/raw/YYYY-MM-DD/page_{n}.json.
-Supports up to 100 requests/day (NewsAPI free tier limit).
+NewsAPI.org scraper: Automatically fetches yesterday's headlines (English, sorted by publication date)
+and saves raw JSON responses in data/raw/YYYY-MM-DD/.
+Runs once daily at 01:00 local time.
 """
 
 import os
@@ -10,6 +10,7 @@ import requests
 import datetime
 import time
 import json
+import schedule
 
 API_KEY = "e571f2b08136491994bde473746cf058"
 BASE_URL = "https://newsapi.org/v2/everything"
@@ -38,7 +39,7 @@ def fetch_headlines(page: int, date_str: str) -> dict:
 
 def save_response(data: dict, date_str: str, page: int) -> None:
     """
-    Saves the JSON response to data/raw/YYYY-MM-DD/page_{page}.json
+    Saves the JSON response to data/raw/YYYY-MM-DD/headlines_page_{page}.json
     """
     dir_path = os.path.join("data", "raw", date_str)
     os.makedirs(dir_path, exist_ok=True)
@@ -49,11 +50,11 @@ def save_response(data: dict, date_str: str, page: int) -> None:
     print(f"Saved page {page} -> {file_path}")
 
 
-def main():
+def run_job():
     # Calculate yesterday's date in YYYY-MM-DD format
     yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+    print(f"[{datetime.datetime.now().isoformat()}] Fetching headlines for {yesterday}...")
 
-    print(f"Fetching headlines for {yesterday}...")
     for page in range(1, MAX_REQUESTS + 1):
         try:
             data = fetch_headlines(page, yesterday)
@@ -61,8 +62,7 @@ def main():
             print(f"HTTP error on page {page}: {e}")
             break
 
-        status = data.get("status")
-        if status != "ok":
+        if data.get("status") != "ok":
             print(f"API error on page {page}: {data}")
             break
 
@@ -73,15 +73,24 @@ def main():
 
         save_response(data, yesterday, page)
 
-        # If fewer articles than page size, we've retrieved all for that day
         if len(articles) < PAGE_SIZE:
             print("Retrieved all available articles.")
             break
 
-        # Be courteous to API; adjust sleep as needed
-        time.sleep(1)
+        time.sleep(1)  # Be courteous to API
 
-    print("Done.")
+    print("Job done.")
+
+
+def main():
+    # Schedule the daily job at 01:00
+    schedule.every().day.at("01:00").do(run_job)
+    print("Scheduler started: job will run daily at 01:00 local time.")
+
+    # Keep the script running
+    while True:
+        schedule.run_pending()
+        time.sleep(60)
 
 
 if __name__ == "__main__":
