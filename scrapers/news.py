@@ -22,6 +22,7 @@ def fetch_headlines(page: int, date_str: str) -> dict:
     Fetches a single page of articles from NewsAPI for a given page and date.
     """
     params = {
+        "q":       "news",
         "from": date_str,
         "to": date_str,
         "language": "en",
